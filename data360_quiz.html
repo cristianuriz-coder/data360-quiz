@@ -366,7 +366,7 @@ const ALL_QUESTIONS = [
 { id:"ex_78", topic:3, q:"Cloud Kicks plans to do a full deletion of one of its existing data streams and its underlying data lake object (DLO). What should the consultant consider before deleting the data stream?", a:"The underlying DLO can be used in a data transform.", b:"The underlying DLO cannot be mapped to a data model object.", c:"The data stream must be associated with a data kit.", d:"The data stream can be deleted without implicitly deleting the underlying DLO.", correct:"a" },
 { id:"ex_79", topic:6, q:"A retail customer wants to bring customer data from different sources and wants to take advantage of identity resolution so that it can be used in segmentation. On which entity should this be segmented for activation membership?", a:"Subscriber", b:"Unified Individual", c:"Unified Contact", d:"Individual", correct:"b" },
 { id:"ex_80", topic:3, q:"Northern Trail Outfitters uploads new customer data to an Amazon S3 Bucket on a daily basis to be ingested in Data Cloud. In what order should each process be run to ensure that freshly imported data is ready and available to use for any segment?", a:"Calculated Insight > Refresh Data Stream > Identity Resolution", b:"Refresh Data Stream > Calculated Insight > Identity Resolution", c:"Identity Resolution > Refresh Data Stream > Calculated Insight", d:"Refresh Data Stream > Identity Resolution > Calculated Insight", correct:"d" },
-{ id:"ex_81", topic:3, q:"Which two dependencies prevent a data stream from being deleted? (Choose 2)", a:"The underlying data lake object is used in activation.", b:"The underlying data lake object is used in a data transform.", c:"The underlying data lake object is mapped to a data model object.", d:"The underlying data lake object is used in segmentation.", correct:"b" },
+{ id:"ex_81", topic:3, q:"Which two dependencies prevent a data stream from being deleted? (Choose 2)", a:"The underlying data lake object is used in activation.", b:"The underlying data lake object is used in a data transform.", c:"The underlying data lake object is mapped to a data model object.", d:"The underlying data lake object is used in segmentation.", correct:["b","c"] },
 { id:"ex_82", topic:4, q:"How does Data Cloud handle an individual's Right to Be Forgotten?", a:"Deletes the records from all data source objects, and any downstream data model objects are updated at the next scheduled ingestion.", b:"Deletes the specified Individual record and its Unified Individual Link record.", c:"Deletes the specified Individual and records from any data source object mapped to the Individual data model object.", d:"Deletes the specified Individual and records from any data model object/data lake object related to the Individual.", correct:"d" },
 { id:"ex_83", topic:4, q:"A customer notices that their consolidation rate is low across their account unification. They have mapped Account to the Individual and Contact Point Email DMOs. What should they do to increase their consolidation rate?", a:"Change reconciliation rules to Most Occurring.", b:"Disable the individual identity ruleset.", c:"Increase the number of matching rules.", d:"Update their account address details in the data source.", correct:"c" },
 { id:"ex_84", topic:6, q:"A user has built a segment in Data 360 and is in the process of creating an activation. When selecting related attributes, they cannot find a specific set of attributes they know to be related to the individual. Which statement explains why these attributes are not available?", a:"The attributes are being used in another activation.", b:"The desired attributes reside on different related paths.", c:"Activations can only include 1-to-1 attributes.", d:"The segment is not segmenting on profile data.", correct:"b" },
@@ -555,9 +555,11 @@ function renderQuiz(topicId) {
     block.className = 'question-block';
     block.id = `qblock_${q.id}`;
 
+    const isMulti = Array.isArray(q.correct);
     block.innerHTML = `
       <div class="q-number">Question ${idx + 1} of ${questions.length}</div>
       <div class="q-text">${q.q}</div>
+      ${isMulti ? `<div style="font-size:.8rem;color:var(--accent2);margin-bottom:.5rem;font-weight:600;">Select ${q.correct.length} answers</div>` : ''}
       <div class="options" id="opts_${q.id}">
         ${['a','b','c','d'].map(letter => `
           <button class="option-btn" data-qid="${q.id}" data-letter="${letter}" onclick="selectOption('${q.id}','${letter}')">
@@ -578,26 +580,56 @@ function renderQuiz(topicId) {
 
 function selectOption(qid, letter) {
   if (state.submitted) return;
-  state.userAnswers[qid] = letter;
+
+  const q = state.questionsForTopic[state.currentTopicId].find(x => x.id === qid);
+  const isMulti = Array.isArray(q.correct);
+
+  if (isMulti) {
+    const current = state.userAnswers[qid] || [];
+    const idx = current.indexOf(letter);
+    if (idx === -1) {
+      if (current.length < q.correct.length) current.push(letter);
+    } else {
+      current.splice(idx, 1);
+    }
+    state.userAnswers[qid] = current.length ? current : null;
+  } else {
+    state.userAnswers[qid] = letter;
+  }
 
   const opts = document.querySelectorAll(`[data-qid="${qid}"]`);
   opts.forEach(btn => {
-    btn.classList.toggle('selected', btn.dataset.letter === letter);
+    const sel = isMulti
+      ? (state.userAnswers[qid] || []).includes(btn.dataset.letter)
+      : btn.dataset.letter === state.userAnswers[qid];
+    btn.classList.toggle('selected', sel);
   });
 
-  document.getElementById(`qblock_${qid}`).classList.add('answered');
+  const answered = state.userAnswers[qid] &&
+    (isMulti ? state.userAnswers[qid].length === q.correct.length : true);
+  if (answered) {
+    document.getElementById(`qblock_${qid}`).classList.add('answered');
+  } else {
+    document.getElementById(`qblock_${qid}`).classList.remove('answered');
+  }
 
   const topicId = state.currentTopicId;
   const questions = state.questionsForTopic[topicId];
-  const answered = questions.filter(q => state.userAnswers[q.id]).length;
+  const answeredCount = questions.filter(q => {
+    const ans = state.userAnswers[q.id];
+    return Array.isArray(q.correct) ? (ans && ans.length === q.correct.length) : ans;
+  }).length;
 
-  updateProgress(topicId, answered);
+  updateProgress(topicId, answeredCount);
   updateSubmitBtn(topicId);
 }
 
 function updateProgress(topicId, answeredOverride) {
   const questions = state.questionsForTopic[topicId];
-  const answered = answeredOverride !== undefined ? answeredOverride : questions.filter(q => state.userAnswers[q.id]).length;
+  const answered = answeredOverride !== undefined ? answeredOverride : questions.filter(q => {
+    const ans = state.userAnswers[q.id];
+    return Array.isArray(q.correct) ? (ans && ans.length === q.correct.length) : ans;
+  }).length;
   const total = questions.length;
   const pct = Math.round(answered / total * 100);
   document.getElementById('progressFill').style.width = pct + '%';
@@ -606,7 +638,10 @@ function updateProgress(topicId, answeredOverride) {
 
 function updateSubmitBtn(topicId) {
   const questions = state.questionsForTopic[topicId];
-  const answered = questions.filter(q => state.userAnswers[q.id]).length;
+  const answered = questions.filter(q => {
+    const ans = state.userAnswers[q.id];
+    return Array.isArray(q.correct) ? (ans && ans.length === q.correct.length) : ans;
+  }).length;
   const btn = document.getElementById('submitQuizBtn');
   btn.disabled = answered < questions.length;
   btn.textContent = answered < questions.length
@@ -628,20 +663,27 @@ function submitQuiz() {
 
   questions.forEach(q => {
     const chosen = state.userAnswers[q.id];
-    const isCorrect = chosen === q.correct;
+    const isMulti = Array.isArray(q.correct);
+    const correctArr = isMulti ? q.correct : [q.correct];
+    const chosenArr = isMulti ? (chosen || []) : (chosen ? [chosen] : []);
+    const isCorrect = isMulti
+      ? (chosenArr.length === correctArr.length && correctArr.every(l => chosenArr.includes(l)))
+      : chosen === q.correct;
     if (isCorrect) correct++;
 
     const opts = document.querySelectorAll(`[data-qid="${q.id}"]`);
     opts.forEach(btn => {
       btn.disabled = true;
       btn.classList.remove('selected');
-      if (btn.dataset.letter === q.correct) {
+      const isCorrectOption = correctArr.includes(btn.dataset.letter);
+      const isChosenOption = chosenArr.includes(btn.dataset.letter);
+      if (isCorrectOption) {
         btn.classList.add('correct');
-        if (chosen !== q.correct) {
+        if (!isChosenOption) {
           btn.innerHTML += `<span class="result-badge correct-badge">✓ Correct answer</span>`;
         }
       }
-      if (btn.dataset.letter === chosen && chosen !== q.correct) {
+      if (isChosenOption && !isCorrectOption) {
         btn.classList.add('wrong');
         btn.innerHTML += `<span class="result-badge wrong-badge">✗ Your answer</span>`;
       }
@@ -649,12 +691,19 @@ function submitQuiz() {
 
     // Show explanation
     const expEl = document.getElementById(`exp_${q.id}`);
-    const letters = ['a','b','c','d'];
-    const wrongOpts = letters.filter(l => l !== q.correct).map(l => `${l.toUpperCase()}) ${q[l]}`).join('<br>');
-    expEl.innerHTML = `
-      <strong>✅ Correct: ${q.correct.toUpperCase()}) ${q[q.correct]}</strong>
-      ${chosen !== q.correct ? `<br><br>You selected: ${chosen.toUpperCase()}) ${q[chosen]}` : ''}
-    `;
+    if (isMulti) {
+      const correctText = correctArr.map(l => `${l.toUpperCase()}) ${q[l]}`).join('<br>');
+      const chosenText = chosenArr.length ? chosenArr.map(l => `${l.toUpperCase()}) ${q[l]}`).join('<br>') : 'None';
+      expEl.innerHTML = `
+        <strong>✅ Correct: (Choose ${correctArr.length})</strong><br>${correctText}
+        ${!isCorrect ? `<br><br>You selected:<br>${chosenText}` : ''}
+      `;
+    } else {
+      expEl.innerHTML = `
+        <strong>✅ Correct: ${q.correct.toUpperCase()}) ${q[q.correct]}</strong>
+        ${chosen !== q.correct ? `<br><br>You selected: ${chosen.toUpperCase()}) ${q[chosen]}` : ''}
+      `;
+    }
     expEl.classList.add('show');
 
     // Color block border
@@ -665,7 +714,14 @@ function submitQuiz() {
   state.scores[topicId] = { correct, total: questions.length };
 
   // Collect wrong question IDs for retry mode
-  const wrongForThisTopic = questions.filter(q => state.userAnswers[q.id] !== q.correct).map(q => q.id);
+  const wrongForThisTopic = questions.filter(q => {
+    const ans = state.userAnswers[q.id];
+    if (Array.isArray(q.correct)) {
+      const arr = ans || [];
+      return !(arr.length === q.correct.length && q.correct.every(l => arr.includes(l)));
+    }
+    return ans !== q.correct;
+  }).map(q => q.id);
   if (state.mode === 'retry') {
     // Only keep the ones still wrong after this retry round
     state.wrongIds[topicId] = wrongForThisTopic;
